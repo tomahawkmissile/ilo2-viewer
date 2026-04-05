@@ -61,6 +61,13 @@ def stage2(
     if supercookie:
         COOKIE_FILE.write_text(supercookie)
         print(f"Session cookie: {supercookie}")
+    else:
+        # Show headers for debugging
+        if "\r\n\r\n" in response:
+            hdrs = response[:response.index("\r\n\r\n")]
+            print(f"Stage2 response headers:\n{hdrs}", flush=True)
+        else:
+            print(f"Stage2: no Set-Cookie found", flush=True)
 
     return supercookie
 

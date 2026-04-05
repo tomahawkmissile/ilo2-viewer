@@ -1,12 +1,10 @@
 """Keyboard and mouse input handling for iLO2 remote console.
 
-Ported from cim.java - translates Qt key/mouse events into iLO2 escape sequences
-and telnet commands.
+Translates web keyboard/mouse events (JavaScript key codes) into
+iLO2 escape sequences and telnet commands.
 """
 
 from __future__ import annotations
-
-from PySide6.QtCore import Qt
 
 from .locale_translator import LocaleTranslator
 
@@ -14,31 +12,31 @@ ESC = "\033"
 
 # F-key mappings: (normal, shift, ctrl, alt) for F1-F12
 _FKEY_MAP = {
-    Qt.Key.Key_F1:  (f"{ESC}[M", f"{ESC}[Y", f"{ESC}[k", f"{ESC}[w"),
-    Qt.Key.Key_F2:  (f"{ESC}[N", f"{ESC}[Z", f"{ESC}[l", f"{ESC}[x"),
-    Qt.Key.Key_F3:  (f"{ESC}[O", f"{ESC}[a", f"{ESC}[m", f"{ESC}[y"),
-    Qt.Key.Key_F4:  (f"{ESC}[P", f"{ESC}[b", f"{ESC}[n", f"{ESC}[z"),
-    Qt.Key.Key_F5:  (f"{ESC}[Q", f"{ESC}[c", f"{ESC}[o", f"{ESC}[@"),
-    Qt.Key.Key_F6:  (f"{ESC}[R", f"{ESC}[d", f"{ESC}[p", f"{ESC}[["),
-    Qt.Key.Key_F7:  (f"{ESC}[S", f"{ESC}[e", f"{ESC}[q", f"{ESC}[\\"),
-    Qt.Key.Key_F8:  (f"{ESC}[T", f"{ESC}[f", f"{ESC}[r", f"{ESC}[]"),
-    Qt.Key.Key_F9:  (f"{ESC}[U", f"{ESC}[g", f"{ESC}[s", f"{ESC}[^"),
-    Qt.Key.Key_F10: (f"{ESC}[V", f"{ESC}[h", f"{ESC}[t", f"{ESC}[_"),
-    Qt.Key.Key_F11: (f"{ESC}[W", f"{ESC}[i", f"{ESC}[u", f"{ESC}[`"),
-    Qt.Key.Key_F12: (f"{ESC}[X", f"{ESC}[j", f"{ESC}[v", f"{ESC}['"),
+    "F1":  (f"{ESC}[M", f"{ESC}[Y", f"{ESC}[k", f"{ESC}[w"),
+    "F2":  (f"{ESC}[N", f"{ESC}[Z", f"{ESC}[l", f"{ESC}[x"),
+    "F3":  (f"{ESC}[O", f"{ESC}[a", f"{ESC}[m", f"{ESC}[y"),
+    "F4":  (f"{ESC}[P", f"{ESC}[b", f"{ESC}[n", f"{ESC}[z"),
+    "F5":  (f"{ESC}[Q", f"{ESC}[c", f"{ESC}[o", f"{ESC}[@"),
+    "F6":  (f"{ESC}[R", f"{ESC}[d", f"{ESC}[p", f"{ESC}[["),
+    "F7":  (f"{ESC}[S", f"{ESC}[e", f"{ESC}[q", f"{ESC}[\\"),
+    "F8":  (f"{ESC}[T", f"{ESC}[f", f"{ESC}[r", f"{ESC}[]"),
+    "F9":  (f"{ESC}[U", f"{ESC}[g", f"{ESC}[s", f"{ESC}[^"),
+    "F10": (f"{ESC}[V", f"{ESC}[h", f"{ESC}[t", f"{ESC}[_"),
+    "F11": (f"{ESC}[W", f"{ESC}[i", f"{ESC}[u", f"{ESC}[`"),
+    "F12": (f"{ESC}[X", f"{ESC}[j", f"{ESC}[v", f"{ESC}['"),
 }
 
-# Navigation key mappings
+# Navigation key mappings (JavaScript event.key values)
 _NAV_MAP = {
-    Qt.Key.Key_Home:     f"{ESC}[H",
-    Qt.Key.Key_End:      f"{ESC}[F",
-    Qt.Key.Key_PageUp:   f"{ESC}[I",
-    Qt.Key.Key_PageDown: f"{ESC}[G",
-    Qt.Key.Key_Insert:   f"{ESC}[L",
-    Qt.Key.Key_Up:       f"{ESC}[A",
-    Qt.Key.Key_Down:     f"{ESC}[B",
-    Qt.Key.Key_Left:     f"{ESC}[D",
-    Qt.Key.Key_Right:    f"{ESC}[C",
+    "Home":      f"{ESC}[H",
+    "End":       f"{ESC}[F",
+    "PageUp":    f"{ESC}[I",
+    "PageDown":  f"{ESC}[G",
+    "Insert":    f"{ESC}[L",
+    "ArrowUp":   f"{ESC}[A",
+    "ArrowDown": f"{ESC}[B",
+    "ArrowLeft": f"{ESC}[D",
+    "ArrowRight":f"{ESC}[C",
 }
 
 # Telnet IAC commands
@@ -53,13 +51,12 @@ MOUSE_USBABS = 1
 MOUSE_USBREL = 2
 
 
-def _modifier_index(modifiers) -> int:
-    """Return modifier index: 0=none, 1=shift, 2=ctrl, 3=alt."""
-    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+def _modifier_index(shift: bool, ctrl: bool, alt: bool) -> int:
+    if shift:
         return 1
-    elif modifiers & Qt.KeyboardModifier.ControlModifier:
+    elif ctrl:
         return 2
-    elif modifiers & Qt.KeyboardModifier.AltModifier:
+    elif alt:
         return 3
     return 0
 
@@ -69,7 +66,6 @@ class InputHandler:
         self._translator = LocaleTranslator()
         self._kbd_disabled = False
         self._altlock = False
-        self._ignore_next_key = False
         self._mouse_protocol = 0
         self._screen_x = 1
         self._screen_y = 1
@@ -100,29 +96,50 @@ class InputHandler:
     def disable_keyboard(self):
         self._kbd_disabled = True
 
-    def translate_key(self, key: int, text: str, modifiers) -> str:
-        """Translate a keyTyped event to an iLO2 escape sequence."""
+    def translate_key_event(self, key: str, char: str,
+                            shift: bool, ctrl: bool, alt: bool) -> str:
+        """Translate a JavaScript keyboard event to an iLO2 escape sequence.
+
+        Args:
+            key: JavaScript event.key value (e.g. "a", "Enter", "F1")
+            char: The typed character (empty for non-printable keys)
+            shift/ctrl/alt: Modifier states
+        """
         if self._kbd_disabled:
             return ""
-        if self._ignore_next_key:
-            self._ignore_next_key = False
+
+        use_alt = alt or self._altlock
+        mod_idx = _modifier_index(shift, ctrl, use_alt)
+
+        # Special keys first
+        if key == "Escape":
+            return f"{ESC}"
+
+        if key == "Tab":
+            return "\t"
+
+        if key == "Delete":
+            if ctrl and use_alt:
+                return self.build_ctrl_alt_del()
             return ""
 
-        mod_idx = _modifier_index(modifiers)
-        if self._altlock and mod_idx == 0:
-            mod_idx = 3
+        # F-keys
+        if key in _FKEY_MAP:
+            return _FKEY_MAP[key][mod_idx]
 
-        char = text[0] if text else ""
-        apply_alt_prefix = True
+        # Navigation keys
+        if key in _NAV_MAP:
+            result = _NAV_MAP[key]
+            if mod_idx == 1:
+                result = f"{ESC}[3{result}"
+            elif mod_idx == 2:
+                result = f"{ESC}[2{result}"
+            elif mod_idx == 3:
+                result = f"{ESC}[1{result}"
+            return result
 
-        # Escape
-        if char == "\x1b":
-            apply_alt_prefix = False
-            return ""
-
-        # Enter/Return
-        if char in ("\n", "\r"):
-            apply_alt_prefix = False
+        # Enter
+        if key == "Enter":
             if mod_idx == 0:
                 return "\r"
             elif mod_idx == 1:
@@ -133,8 +150,7 @@ class InputHandler:
                 return f"{ESC}[1\r"
 
         # Backspace
-        if char == "\x08":
-            apply_alt_prefix = False
+        if key == "Backspace":
             if mod_idx == 0:
                 return "\b"
             elif mod_idx == 1:
@@ -144,89 +160,16 @@ class InputHandler:
             elif mod_idx == 3:
                 return f"{ESC}[1\b"
 
-        # Default: use locale translator
-        result = self._translator.translate(char) if char else ""
-
-        if apply_alt_prefix and result and mod_idx == 3:
-            result = f"{ESC}[1{result}"
-
-        return result
-
-    def translate_special_key(self, key: int, modifiers) -> str:
-        """Translate a keyPressed event for special keys."""
-        if self._kbd_disabled:
-            return ""
-
-        mod_idx = _modifier_index(modifiers)
-        if self._altlock and not (modifiers & Qt.KeyboardModifier.AltModifier):
-            if mod_idx == 0:
-                mod_idx = 3
-
-        result = ""
-        needs_modifier_prefix = True
-
-        # Escape
-        if key == Qt.Key.Key_Escape:
-            return f"{ESC}"
-
-        # Tab
-        if key == Qt.Key.Key_Tab:
-            return "\t"
-
-        # Delete
-        if key == Qt.Key.Key_Delete:
-            if (modifiers & Qt.KeyboardModifier.ControlModifier) and (
-                self._altlock or (modifiers & Qt.KeyboardModifier.AltModifier)
-            ):
-                return f"{ESC}[2{ESC}["  # Ctrl-Alt-Del
-            return ""
-
-        # F-keys
-        if key in _FKEY_MAP:
-            return _FKEY_MAP[key][mod_idx]
-
-        # Navigation keys
-        if key in _NAV_MAP:
-            result = _NAV_MAP[key]
-        else:
-            needs_modifier_prefix = False
-
-        if result and needs_modifier_prefix:
-            if mod_idx == 1:
-                result = f"{ESC}[3{result}"
-            elif mod_idx == 2:
-                result = f"{ESC}[2{result}"
-            elif mod_idx == 3:
+        # Regular character
+        if char and len(char) == 1:
+            result = self._translator.translate(char)
+            if result and mod_idx == 3:
                 result = f"{ESC}[1{result}"
+            return result
 
-        return result
-
-    def translate_key_release(self, key: int, modifiers) -> str:
-        """Translate a keyReleased event (for IME/special key releases)."""
-        i = 0
-        if modifiers & Qt.KeyboardModifier.ShiftModifier:
-            i = 1
-        if self._altlock or (modifiers & Qt.KeyboardModifier.AltModifier):
-            i += 2
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
-            i += 4
-
-        # Handle special key codes for IME
-        if key in (243, 244, 263):
-            i += 128
-        elif key == 29:
-            i += 136
-        elif key in (28, 256, 257):
-            i += 144
-        elif key in (241, 242, 245):
-            i += 152
-
-        if i > 127:
-            return chr(i)
         return ""
 
     def build_mouse_move(self, dx: int, dy: int, client_x: int, client_y: int) -> bytes:
-        """Build a mouse move command."""
         dx = max(-128, min(127, dx))
         dy = max(-128, min(127, dy))
 

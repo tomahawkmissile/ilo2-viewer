@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import socket
 import threading
-from typing import TYPE_CHECKING
-
-from PySide6.QtCore import QObject, Signal
+from typing import TYPE_CHECKING, Callable
 
 from .rc4 import RC4
 from .dvc import DVCDecoder
@@ -29,15 +27,10 @@ CMD_TS_STARTED = 0xC4
 CMD_TS_STOPPED = 0xC5
 
 
-class Connection(QObject):
+class Connection:
     """Manages the telnet socket connection to iLO2."""
 
-    status_changed = Signal(int, str)  # (field_index, message)
-    seized = Signal()
-    disconnected_signal = Signal()
-
-    def __init__(self, screen: DisplayWidget, parent=None):
-        super().__init__(parent)
+    def __init__(self, screen: DisplayWidget):
         self._screen = screen
         self._socket: socket.socket | None = None
         self._receiver_thread: threading.Thread | None = None
@@ -68,11 +61,19 @@ class Connection(QObject):
         self._dvc.on_change_key = self._change_key
         self._dvc.on_seize = self._on_seize
         self._dvc.on_refresh_screen = self.refresh_screen
-        self._dvc.on_set_status = lambda f, m: self.status_changed.emit(f, m)
-        self._dvc.on_start_rdp = lambda ts: None  # RDP not ported
+        self._dvc.on_set_status = lambda f, m: self._emit_status(f, m)
+        self._dvc.on_start_rdp = lambda ts: None
         self._dvc.on_stop_rdp = lambda: None
 
         self._lock = threading.Lock()
+
+        # Callbacks (set by web server)
+        self.on_status_changed: Callable[[int, str], None] = lambda f, m: None
+        self.on_disconnected: Callable[[], None] = lambda: None
+        self.on_seized: Callable[[], None] = lambda: None
+
+    def _emit_status(self, field: int, message: str):
+        self.on_status_changed(field, message)
 
     def setup_encryption(self, encrypt_key: bytes, key_index: int):
         self._rc4_encrypter = RC4(encrypt_key)
@@ -90,7 +91,6 @@ class Connection(QObject):
         self._host = host
         self._port = port
 
-        # Prepend encryption start command if enabled
         if self._encryption_enabled:
             login = f"\xff\xc0    {login}"
             self._encryption_active = True
@@ -100,14 +100,19 @@ class Connection(QObject):
         self._screen.start_updates()
         self._connected = True
 
-        self.status_changed.emit(1, "Connecting")
+        print(f"Login string ({len(login)} bytes): {login[:40]!r}...", flush=True)
+        print(f"Encryption: enabled={self._encryption_enabled} active={self._encryption_active}", flush=True)
+        self._emit_status(1, "Connecting")
 
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            import struct
             self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                                     bytes([1, 0, 0, 0, 0, 0, 0, 0]))
+                                     struct.pack("ii", 1, 0))
+            self._socket.settimeout(10)
             self._socket.connect((self._host, self._port))
-            self.status_changed.emit(1, "Online")
+            self._socket.settimeout(None)
+            self._emit_status(1, "Online")
 
             self._receiver_thread = threading.Thread(
                 target=self._receiver_loop, daemon=True, name="telnet_rcvr"
@@ -117,7 +122,7 @@ class Connection(QObject):
             self.transmit_str(self._login)
         except Exception as e:
             print(f"Connection error: {e}")
-            self.status_changed.emit(1, str(e))
+            self._emit_status(1, str(e))
             self._cleanup()
 
     def disconnect(self):
@@ -133,13 +138,12 @@ class Connection(QObject):
                 print(f"Disconnect error: {e}")
         self._socket = None
         self._dvc_mode = False
-        self.status_changed.emit(1, "Offline")
-        self.status_changed.emit(2, "")
-        self.status_changed.emit(3, "")
-        self.disconnected_signal.emit()
+        self._emit_status(1, "Offline")
+        self._emit_status(2, "")
+        self._emit_status(3, "")
+        self.on_disconnected()
 
     def transmit_str(self, data: str):
-        """Transmit a string, applying RC4 encryption if active."""
         if not self._socket or not data:
             return
 
@@ -167,7 +171,6 @@ class Connection(QObject):
         self._send_raw(bytes(raw))
 
     def transmit_bytes(self, data: bytes):
-        """Transmit raw bytes, applying RC4 encryption if active."""
         if not self._socket or not data:
             return
 
@@ -196,6 +199,7 @@ class Connection(QObject):
     def _send_raw(self, data: bytes):
         if self._socket:
             try:
+                print(f"SEND[{len(data)}]: {data[:40]!r}", flush=True)
                 self._socket.sendall(data)
             except Exception as e:
                 print(f"Transmit error: {e}")
@@ -209,22 +213,29 @@ class Connection(QObject):
     def send_auto_alive(self):
         self.transmit_str("\033[&")
 
-    # MouseSyncListener interface
+    # MouseSyncListener interface — only send if DVC mode is active
     def server_move(self, dx: int, dy: int, client_x: int, client_y: int):
+        if not self._dvc_mode:
+            return
         data = self.input_handler.build_mouse_move(dx, dy, client_x, client_y)
         self.transmit_bytes(data)
 
     def server_press(self, button: int):
+        if not self._dvc_mode:
+            return
         self.transmit_bytes(InputHandler.build_mouse_press(button))
 
     def server_release(self, button: int):
+        if not self._dvc_mode:
+            return
         self.transmit_bytes(InputHandler.build_mouse_release(button))
 
     def server_click(self, button: int, count: int):
+        if not self._dvc_mode:
+            return
         self.transmit_bytes(InputHandler.build_mouse_click(button, count))
 
     def _change_key(self):
-        """Called by DVC firmware command 9 - rotate encryption keys."""
         with self._lock:
             if self._rc4_encrypter:
                 self._rc4_encrypter.update_key()
@@ -232,16 +243,15 @@ class Connection(QObject):
                 self._rc4_decrypter.update_key()
 
     def _on_seize(self):
-        """Called by DVC firmware command 10 - session seized."""
         self._screen.show_text("Session Acquired by another user.")
-        self.status_changed.emit(1, "Offline")
+        self._emit_status(1, "Offline")
         self.disconnect()
-        self.seized.emit()
+        self.on_seized()
 
     def _receiver_loop(self):
-        """Main receiver thread - reads data from socket and processes DVC."""
         self._screen.show_text("Connecting")
-        esc_state = 0  # 0=none, 1=got ESC, 2=got ESC[
+        esc_state = 0
+        _debug_bytes = 0
 
         try:
             while self._connected:
@@ -254,17 +264,21 @@ class Connection(QObject):
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    print(f"Receiver error: {e}")
+                    print(f"Receiver error: {e}", flush=True)
                     break
 
                 if not data:
                     break
 
+                if _debug_bytes < 5000:
+                    esc_positions = [i for i, b in enumerate(data) if b == 0x1b]
+                    print(f"RECV[{len(data)}] ESC@{esc_positions}: {' '.join(f'{b:02x}' for b in data[:80])}", flush=True)
+                    _debug_bytes += len(data)
+
                 for byte in data:
                     c = byte & 0xFF
 
                     if self._dvc_mode:
-                        # Decrypt if needed
                         if self._dvc_encryption and self._rc4_decrypter:
                             c ^= self._rc4_decrypter.random_value()
                             c &= 0xFF
@@ -272,27 +286,25 @@ class Connection(QObject):
                         self._dvc_mode = self._dvc.process_dvc(c)
                         if not self._dvc_mode:
                             print("DVC mode turned off")
-                            self.status_changed.emit(1, "DVC Mode off")
+                            self._emit_status(1, "DVC Mode off")
 
-                        # Update input handler screen size from DVC
                         self.input_handler.set_screen_size(
                             self._dvc.screen_x, self._dvc.screen_y
                         )
                     else:
-                        # Detect DVC mode via ESC[R or ESC[r
-                        if c == 0x1B:  # ESC
+                        if c == 0x1B:
                             esc_state = 1
-                        elif esc_state == 1 and c == 0x5B:  # [
+                        elif esc_state == 1 and c == 0x5B:
                             esc_state = 2
                         elif esc_state == 2 and c == ord("R"):
                             self._dvc_mode = True
                             self._dvc_encryption = True
-                            self.status_changed.emit(1, "DVC Mode (RC4-128 bit)")
+                            self._emit_status(1, "DVC Mode (RC4-128 bit)")
                             esc_state = 0
                         elif esc_state == 2 and c == ord("r"):
                             self._dvc_mode = True
                             self._dvc_encryption = False
-                            self.status_changed.emit(1, "DVC Mode (no encryption)")
+                            self._emit_status(1, "DVC Mode (no encryption)")
                             esc_state = 0
                         else:
                             esc_state = 0
@@ -302,7 +314,7 @@ class Connection(QObject):
         finally:
             if self._connected:
                 self._screen.show_text("Offline")
-                self.status_changed.emit(1, "Offline")
+                self._emit_status(1, "Offline")
                 self.disconnect()
 
     def _cleanup(self):

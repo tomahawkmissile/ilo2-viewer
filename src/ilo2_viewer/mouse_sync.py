@@ -59,7 +59,7 @@ class _State(IntEnum):
 class _Timer:
     """Simple timer that fires a callback after a timeout (runs in a thread)."""
 
-    def __init__(self, timeout: float, callback, mutex: threading.Lock):
+    def __init__(self, timeout: float, callback, mutex: threading.RLock):
         self._timeout = timeout
         self._callback = callback
         self._mutex = mutex
@@ -102,7 +102,7 @@ class MouseSync:
     SYNC_DELTAS = [1, 4, 6, 8, 12, 16, 32, 64]
 
     def __init__(self):
-        self._mutex = threading.Lock()
+        self._mutex = threading.RLock()
         self._state = _State.INIT
         self._listener: MouseSyncListener | None = None
         self._debug = False
@@ -514,10 +514,11 @@ class MouseSync:
             self._handle_click(button, modifiers)
 
     def _handle_press(self, button: int, modifiers: int):
+        """button: 0=left, 1=middle, 2=right (matching JS MouseEvent.button)"""
         if self._pressed_button == 0:
-            if button == Qt.MouseButton.RightButton:
+            if button == 2:
                 self._pressed_button = MOUSE_BUTTON_RIGHT
-            elif button == Qt.MouseButton.MiddleButton:
+            elif button == 1:
                 self._pressed_button = MOUSE_BUTTON_CENTER
             else:
                 self._pressed_button = MOUSE_BUTTON_LEFT
@@ -535,10 +536,11 @@ class MouseSync:
                 self._listener.server_release(MOUSE_BUTTON_RIGHT)
 
     def _handle_click(self, button: int, modifiers: int):
+        """button: 0=left, 1=middle, 2=right (matching JS MouseEvent.button)"""
         if not self._dragging and self._listener:
-            if button == Qt.MouseButton.LeftButton:
+            if button == 0:
                 self._listener.server_click(MOUSE_BUTTON_LEFT, 1)
-            elif button == Qt.MouseButton.MiddleButton:
+            elif button == 1:
                 self._listener.server_click(MOUSE_BUTTON_CENTER, 1)
-            elif button == Qt.MouseButton.RightButton:
+            elif button == 2:
                 self._listener.server_click(MOUSE_BUTTON_RIGHT, 1)

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>iLO2 Remote Console</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #1a1a1a; color: #ccc; font-family: Arial, sans-serif; font-size: 14px; }
+  #toolbar {
+    background: #2a2a2a; padding: 6px 10px; display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid #444;
+  }
+  #toolbar button {
+    background: #444; color: #ccc; border: 1px solid #555; padding: 4px 12px;
+    cursor: pointer; border-radius: 3px;
+  }
+  #toolbar button:hover { background: #555; }
+  #toolbar label { cursor: pointer; user-select: none; }
+  #toolbar select { background: #444; color: #ccc; border: 1px solid #555; padding: 2px 6px; }
+  #canvas-container {
+    display: flex; justify-content: center; padding: 0; background: #000;
+    min-height: calc(100vh - 70px); align-items: flex-start;
+  }
+  #screen { cursor: crosshair; display: block; }
+  #statusbar {
+    background: #2a2a2a; padding: 4px 10px; border-top: 1px solid #444;
+    position: fixed; bottom: 0; left: 0; right: 0; font-size: 12px; color: #888;
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <strong id="title" style="color:#fff">iLO2</strong>
+  <button onclick="sendCmd('refresh')">Refresh</button>
+  <button onclick="sendCmd('ctrl_alt_del')">Ctrl-Alt-Del</button>
+  <label><input type="checkbox" id="altlock" onchange="toggleAltLock()"> Alt Lock</label>
+</div>
+<div id="canvas-container">
+  <canvas id="screen" width="640" height="480" tabindex="1"></canvas>
+</div>
+<div id="statusbar">Connecting...</div>
+
+<script>
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const statusbar = document.getElementById('statusbar');
+let ws;
+let connected = false;
+let lastButton = 0;
+let mouseDown = false;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => { connected = true; };
+
+  ws.onmessage = (evt) => {
+    if (typeof evt.data === 'string') {
+      const msg = JSON.parse(evt.data);
+      if (msg.type === 'init' || msg.type === 'resize') {
+        canvas.width = msg.width;
+        canvas.height = msg.height;
+        if (msg.hostname) {
+          document.getElementById('title').textContent = msg.hostname + ' - iLO2';
+          document.title = msg.hostname + ' - iLO2 Console';
+        }
+      }
+      if (msg.type === 'status' || msg.type === 'init') {
+        statusbar.textContent = msg.status || msg.text || '';
+      }
+    } else {
+      // Binary: JPEG frame
+      const blob = new Blob([evt.data], { type: 'image/jpeg' });
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    }
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    statusbar.textContent = 'Disconnected - reconnecting...';
+    setTimeout(connect, 2000);
+  };
+}
+
+function send(obj) {
+  if (connected && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+function sendCmd(type) {
+  send({ type });
+  canvas.focus();
+}
+
+function toggleAltLock() {
+  send({ type: 'altlock', enabled: document.getElementById('altlock').checked });
+  canvas.focus();
+}
+
+// Keyboard
+canvas.addEventListener('keydown', (e) => {
+  e.preventDefault();
+  send({
+    type: 'key',
+    key: e.key,
+    char: e.key.length === 1 ? e.key : '',
+    shift: e.shiftKey,
+    ctrl: e.ctrlKey,
+    alt: e.altKey,
+  });
+});
+
+// Prevent context menu on canvas
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Mouse
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  mouseDown = true;
+  lastButton = e.button;
+  const r = canvas.getBoundingClientRect();
+  send({ type: 'mousedown', x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top), button: e.button });
+  canvas.focus();
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  e.preventDefault();
+  mouseDown = false;
+  const r = canvas.getBoundingClientRect();
+  send({ type: 'mouseup', x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top), button: e.button });
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  const x = Math.round(e.clientX - r.left);
+  const y = Math.round(e.clientY - r.top);
+  if (mouseDown) {
+    send({ type: 'mousedrag', x, y, button: lastButton });
+  } else {
+    send({ type: 'mousemove', x, y });
+  }
+});
+
+connect();
+canvas.focus();
+</script>
+</body>
+</html>
