@@ -19,7 +19,7 @@ from .display import DisplayWidget
 from .input_handler import InputHandler
 
 STATIC_DIR = Path(__file__).parent / "static"
-FRAME_INTERVAL = 1 / 15  # 15 fps default
+FRAME_INTERVAL = 1 / 30  # 30 fps target
 
 
 class WebConsole:
@@ -217,6 +217,7 @@ class WebConsole:
 
     async def _frame_streamer(self):
         """Periodically encode and broadcast video frames."""
+        last_w, last_h = 0, 0
         while True:
             await asyncio.sleep(FRAME_INTERVAL)
             if not self._websockets:
@@ -224,9 +225,10 @@ class WebConsole:
 
             frame = self._display.encode_frame()
             if frame:
-                # Also send dimensions in case they changed
                 w, h = self._display.get_dimensions()
-                await self._broadcast_json({"type": "resize", "width": w, "height": h})
+                if w != last_w or h != last_h:
+                    last_w, last_h = w, h
+                    await self._broadcast_json({"type": "resize", "width": w, "height": h})
                 await self._broadcast_binary(frame)
 
     def start_session(self):
@@ -260,5 +262,18 @@ class WebConsole:
         # Start iLO2 connection in a thread so it doesn't block the event loop
         self._loop.run_in_executor(None, self.start_session)
 
-        # Stream frames forever
-        await self._frame_streamer()
+        # Stream frames until interrupted
+        try:
+            await self._frame_streamer()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self.shutdown()
+
+    def shutdown(self):
+        """Cleanly disconnect from iLO2."""
+        print("Disconnecting from iLO2...", flush=True)
+        self._connection.disconnect()
+        # Invalidate the saved cookie so the session is freed on the iLO2
+        from .auth import COOKIE_FILE
+        COOKIE_FILE.unlink(missing_ok=True)

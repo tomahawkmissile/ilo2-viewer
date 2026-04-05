@@ -16,7 +16,6 @@
   }
   #toolbar button:hover { background: #555; }
   #toolbar label { cursor: pointer; user-select: none; }
-  #toolbar select { background: #444; color: #ccc; border: 1px solid #555; padding: 2px 6px; }
   #canvas-container {
     display: flex; justify-content: center; padding: 0; background: #000;
     min-height: calc(100vh - 70px); align-items: flex-start;
@@ -49,6 +48,33 @@ let connected = false;
 let lastButton = 0;
 let mouseDown = false;
 
+// Reusable Image for frame decoding — avoids GC pressure
+const frameImg = new Image();
+let pendingFrame = null;
+let rendering = false;
+
+frameImg.onload = () => {
+  ctx.drawImage(frameImg, 0, 0);
+  URL.revokeObjectURL(frameImg.src);
+  rendering = false;
+  // If another frame arrived while we were rendering, show it now
+  if (pendingFrame) {
+    showFrame(pendingFrame);
+    pendingFrame = null;
+  }
+};
+
+function showFrame(data) {
+  if (rendering) {
+    // Drop intermediate frames, keep only the latest
+    if (pendingFrame) URL.revokeObjectURL(pendingFrame);
+    pendingFrame = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+    return;
+  }
+  rendering = true;
+  frameImg.src = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+}
+
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
@@ -60,8 +86,10 @@ function connect() {
     if (typeof evt.data === 'string') {
       const msg = JSON.parse(evt.data);
       if (msg.type === 'init' || msg.type === 'resize') {
-        canvas.width = msg.width;
-        canvas.height = msg.height;
+        if (canvas.width !== msg.width || canvas.height !== msg.height) {
+          canvas.width = msg.width;
+          canvas.height = msg.height;
+        }
         if (msg.hostname) {
           document.getElementById('title').textContent = msg.hostname + ' - iLO2';
           document.title = msg.hostname + ' - iLO2 Console';
@@ -72,14 +100,7 @@ function connect() {
       }
     } else {
       // Binary: JPEG frame
-      const blob = new Blob([evt.data], { type: 'image/jpeg' });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
+      showFrame(evt.data);
     }
   };
 

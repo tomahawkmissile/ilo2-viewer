@@ -61,7 +61,10 @@ def main():
         sys.exit(1)
 
     console = WebConsole(hostname, params)
-    asyncio.run(console.run(port=args.port))
+    try:
+        asyncio.run(console.run(port=args.port))
+    except KeyboardInterrupt:
+        console.shutdown()
 
 
 if __name__ == "__main__":
