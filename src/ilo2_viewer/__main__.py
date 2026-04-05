@@ -54,14 +54,12 @@ def main():
     if not all([hostname, username, password]):
         parser.error("hostname, username, and password are required")
 
-    print(f"Authenticating with {hostname}...")
     try:
         params = authenticate(hostname, username, password)
     except Exception as e:
         print(f"Authentication failed: {e}")
         sys.exit(1)
 
-    print("Authentication complete, starting web server...", flush=True)
     console = WebConsole(hostname, params)
     asyncio.run(console.run(port=args.port))
 

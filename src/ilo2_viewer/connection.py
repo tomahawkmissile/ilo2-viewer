@@ -100,8 +100,6 @@ class Connection:
         self._screen.start_updates()
         self._connected = True
 
-        print(f"Login string ({len(login)} bytes): {login[:40]!r}...", flush=True)
-        print(f"Encryption: enabled={self._encryption_enabled} active={self._encryption_active}", flush=True)
         self._emit_status(1, "Connecting")
 
         try:
@@ -199,7 +197,6 @@ class Connection:
     def _send_raw(self, data: bytes):
         if self._socket:
             try:
-                print(f"SEND[{len(data)}]: {data[:40]!r}", flush=True)
                 self._socket.sendall(data)
             except Exception as e:
                 print(f"Transmit error: {e}")
@@ -251,7 +248,6 @@ class Connection:
     def _receiver_loop(self):
         self._screen.show_text("Connecting")
         esc_state = 0
-        _debug_bytes = 0
 
         try:
             while self._connected:
@@ -264,16 +260,10 @@ class Connection:
                 except socket.timeout:
                     continue
                 except Exception as e:
-                    print(f"Receiver error: {e}", flush=True)
                     break
 
                 if not data:
                     break
-
-                if _debug_bytes < 5000:
-                    esc_positions = [i for i, b in enumerate(data) if b == 0x1b]
-                    print(f"RECV[{len(data)}] ESC@{esc_positions}: {' '.join(f'{b:02x}' for b in data[:80])}", flush=True)
-                    _debug_bytes += len(data)
 
                 for byte in data:
                     c = byte & 0xFF

@@ -33,8 +33,6 @@ def stage1(hostname: str) -> tuple[str, str]:
 
     session_key = _extract(html, 'var sessionkey="', '";')
     session_index = _extract(html, 'var sessionindex="', '";')
-    print(f"Session key: {session_key}")
-    print(f"Session  ID: {session_index}")
     return session_key, session_index
 
 
@@ -60,14 +58,6 @@ def stage2(
 
     if supercookie:
         COOKIE_FILE.write_text(supercookie)
-        print(f"Session cookie: {supercookie}")
-    else:
-        # Show headers for debugging
-        if "\r\n\r\n" in response:
-            hdrs = response[:response.index("\r\n\r\n")]
-            print(f"Stage2 response headers:\n{hdrs}", flush=True)
-        else:
-            print(f"Stage2: no Set-Cookie found", flush=True)
 
     return supercookie
 
@@ -103,7 +93,6 @@ def stage3(hostname: str, supercookie: str) -> dict[str, str]:
     except ValueError:
         pass
 
-    print(f"CABBASE = {params.get('CABBASE', 'N/A')}")
     return params
 
 
@@ -119,18 +108,13 @@ def authenticate(hostname: str, username: str, password: str, **kwargs) -> dict[
 
     # Try loading saved cookie
     if COOKIE_FILE.exists():
-        print("Found datastore")
         saved = COOKIE_FILE.read_text().strip()
-        print("Validating saved session...")
         if saved and is_valid(hostname, saved):
-            print("Session valid, reusing cookie")
             supercookie = saved
         else:
-            print("Datastore not valid, requesting Cookie")
             session_key, session_index = stage1(hostname)
             supercookie = stage2(hostname, username, password, session_key, session_index)
     else:
-        print("Couldn't find datastore, requesting Cookie")
         session_key, session_index = stage1(hostname)
         supercookie = stage2(hostname, username, password, session_key, session_index)
 

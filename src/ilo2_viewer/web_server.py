@@ -255,7 +255,7 @@ class WebConsole:
         site = web.TCPSite(runner, host, port)
         await site.start()
 
-        print(f"\n  iLO2 Console ready: http://localhost:{port}\n", flush=True)
+        print(f"iLO2 Console: http://localhost:{port}", flush=True)
 
         # Start iLO2 connection in a thread so it doesn't block the event loop
         self._loop.run_in_executor(None, self.start_session)
