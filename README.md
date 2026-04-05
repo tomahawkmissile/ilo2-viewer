@@ -2,7 +2,7 @@
 
 A modern Python remote console client for HP Integrated Lights-Out 2 (iLO2) devices, served as a web application.
 
-This is a port of [ILO2-Standalone-Remote-Console](https://github.com/perjg/ILO2-Standalone-Remote-Console) from Java Swing to Python. The video console is streamed to your browser over WebSocket.
+This is a port of ILO2-Standalone-Remote-Console from Java Swing to Python. The video console is streamed to your browser over WebSocket.
 
 ## Features
 
@@ -12,6 +12,7 @@ This is a port of [ILO2-Standalone-Remote-Console](https://github.com/perjg/ILO2
 - RC4-128 session encryption
 - TLSv1.0 support via pyOpenSSL (required for legacy iLO2 firmware)
 - Cookie-based session persistence
+- Clean disconnect on Ctrl-C (frees iLO2 session slot)
 
 ## Requirements
 
@@ -39,7 +40,7 @@ PYTHONPATH=src python -m ilo2_viewer -c config.ini
 PYTHONPATH=src python -m ilo2_viewer -p 9000 <hostname> <username> <password>
 ```
 
-Then open `http://localhost:8080` in your browser.
+Then open `http://localhost:8080` in your browser. Press `Ctrl-C` to disconnect cleanly.
 
 ### Config file format
 
