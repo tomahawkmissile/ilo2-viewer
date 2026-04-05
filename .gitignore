@@ -1,0 +1,4 @@
+venv/
+config.ini
+data.cook
+__pycache__/

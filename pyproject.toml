@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ilo2-viewer"
+version = "1.0.0"
+description = "HP iLO2 Remote Console Viewer"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.5",
+    "requests>=2.28",
+    "pyOpenSSL>=23.0",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+ilo2-viewer = "ilo2_viewer.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
