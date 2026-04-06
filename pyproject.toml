@@ -13,6 +13,7 @@ dependencies = [
     "pyOpenSSL>=23.0",
     "numpy>=1.24",
     "Pillow>=10.0",
+    "pyghmi>=1.5",
 ]
 
 [project.scripts]

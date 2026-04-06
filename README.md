@@ -10,6 +10,7 @@ This is a port of ILO2-Standalone-Remote-Console from Java Swing to Python. The 
 - Web-based UI — works in any browser, no display server needed
 - Keyboard and mouse input with locale translation (18 layouts)
 - RC4-128 session encryption
+- IPMI power control (on, off, reset, graceful shutdown)
 - TLSv1.0 support via pyOpenSSL (required for legacy iLO2 firmware)
 - Cookie-based session persistence
 - Clean disconnect on Ctrl-C (frees iLO2 session slot)
@@ -24,7 +25,7 @@ This is a port of ILO2-Standalone-Remote-Console from Java Swing to Python. The 
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install aiohttp requests pyOpenSSL numpy Pillow
+pip install aiohttp requests pyOpenSSL numpy Pillow pyghmi
 ```
 
 ## Usage
@@ -68,6 +69,7 @@ src/ilo2_viewer/
   mouse_sync.py        Mouse synchronization and calibration state machine
   locale_translator.py Keyboard layout mappings for 18 locales
   rc4.py               RC4 stream cipher with MD5 key derivation
+  power.py             IPMI power control via pyghmi
   static/index.html    Browser client (canvas + WebSocket)
 ```
 

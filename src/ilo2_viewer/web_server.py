@@ -17,15 +17,19 @@ from aiohttp import web
 from .connection import Connection
 from .display import DisplayWidget
 from .input_handler import InputHandler
+from . import power
 
 STATIC_DIR = Path(__file__).parent / "static"
 FRAME_INTERVAL = 1 / 30  # 30 fps target
 
 
 class WebConsole:
-    def __init__(self, hostname: str, params: dict[str, str]):
+    def __init__(self, hostname: str, params: dict[str, str],
+                 username: str = "", password: str = ""):
         self._hostname = hostname
         self._params = params
+        self._username = username
+        self._password = password
         self._display = DisplayWidget()
         self._connection = Connection(self._display)
         self._status_fields = ["", "Offline", "", "", ""]
@@ -167,6 +171,26 @@ class WebConsole:
 
         return ws
 
+    async def handle_power(self, request: web.Request) -> web.Response:
+        """Handle power control API requests."""
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid JSON"}, status=400)
+
+        action = body.get("action", "status")
+        if action not in ("status", "on", "off", "reset", "shutdown"):
+            return web.json_response({"error": f"unknown action: {action}"}, status=400)
+
+        try:
+            result = await self._loop.run_in_executor(
+                None, power.set_power,
+                self._hostname, self._username, self._password, action,
+            )
+            return web.json_response({"action": action, "result": result})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
     def _handle_input(self, msg: dict):
         t = msg.get("type")
 
@@ -251,6 +275,7 @@ class WebConsole:
         app = web.Application()
         app.router.add_get("/", self.handle_index)
         app.router.add_get("/ws", self.handle_ws)
+        app.router.add_post("/api/power", self.handle_power)
 
         runner = web.AppRunner(app)
         await runner.setup()

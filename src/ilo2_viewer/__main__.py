@@ -60,7 +60,7 @@ def main():
         print(f"Authentication failed: {e}")
         sys.exit(1)
 
-    console = WebConsole(hostname, params)
+    console = WebConsole(hostname, params, username=username, password=password)
     try:
         asyncio.run(console.run(port=args.port))
     except KeyboardInterrupt:

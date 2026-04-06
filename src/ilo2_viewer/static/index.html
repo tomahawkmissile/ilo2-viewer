@@ -33,6 +33,13 @@
   <button onclick="sendCmd('refresh')">Refresh</button>
   <button onclick="sendCmd('ctrl_alt_del')">Ctrl-Alt-Del</button>
   <label><input type="checkbox" id="altlock" onchange="toggleAltLock()"> Alt Lock</label>
+  <span style="border-left:1px solid #555; height:20px; margin:0 4px"></span>
+  <span style="color:#888; font-size:12px">Power:</span>
+  <span id="power-status" style="font-size:12px; margin-right:4px">--</span>
+  <button onclick="powerAction('on')" title="Power On">On</button>
+  <button onclick="powerAction('off')" title="Power Off (immediate)">Off</button>
+  <button onclick="powerAction('reset')" title="Hard Reset">Reset</button>
+  <button onclick="powerAction('shutdown')" title="Graceful Shutdown (ACPI)">Shutdown</button>
 </div>
 <div id="canvas-container">
   <canvas id="screen" width="640" height="480" tabindex="1"></canvas>
@@ -126,6 +133,36 @@ function toggleAltLock() {
   send({ type: 'altlock', enabled: document.getElementById('altlock').checked });
   canvas.focus();
 }
+
+// Power control
+const powerStatus = document.getElementById('power-status');
+
+async function powerAction(action) {
+  if (action !== 'status' && !confirm(`Are you sure you want to ${action} the server?`)) return;
+  powerStatus.textContent = '...';
+  try {
+    const resp = await fetch('/api/power', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      powerStatus.textContent = 'err';
+      alert('Power error: ' + data.error);
+    } else {
+      powerStatus.textContent = data.result;
+    }
+  } catch (e) {
+    powerStatus.textContent = 'err';
+  }
+  canvas.focus();
+}
+
+// Poll power status every 30s
+function pollPower() { powerAction('status'); }
+setInterval(pollPower, 30000);
+setTimeout(pollPower, 1000);
 
 // Keyboard
 canvas.addEventListener('keydown', (e) => {
