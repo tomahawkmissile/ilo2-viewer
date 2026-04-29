@@ -9,17 +9,36 @@ from __future__ import annotations
 
 import base64
 import re
+import time
 from pathlib import Path
 
 from . import ssl_config
 
 COOKIE_FILE = Path("data.cook")
 
+# iLO2 throttles repeated logins. Retry stage1 a few times when we hit it.
+_LOGIN_DELAY_MAX_RETRIES = 6
+_LOGIN_DELAY_FALLBACK_SECONDS = 10
+
 
 def _extract(html: str, prefix: str, suffix: str) -> str:
-    start = html.index(prefix) + len(prefix)
-    end = html.index(suffix, start)
+    try:
+        start = html.index(prefix) + len(prefix)
+        end = html.index(suffix, start)
+    except ValueError:
+        raise ValueError(f"could not find {prefix!r}…{suffix!r} in response")
     return html[start:end]
+
+
+def _login_delay_seconds(html: str) -> int | None:
+    """If iLO2 returned a Login Delay page, return seconds to wait, else None."""
+    if "Login Delay" not in html:
+        return None
+    # iLO2's delay page usually contains something like "Login Delay : 10 seconds"
+    m = re.search(r"Login Delay[^0-9]{0,40}(\d+)", html)
+    if m:
+        return int(m.group(1))
+    return _LOGIN_DELAY_FALLBACK_SECONDS
 
 
 def _get(hostname: str, path: str, extra_headers: dict[str, str] | None = None) -> str:
@@ -28,12 +47,38 @@ def _get(hostname: str, path: str, extra_headers: dict[str, str] | None = None) 
 
 
 def stage1(hostname: str) -> tuple[str, str]:
-    """GET login.htm and extract sessionkey + sessionindex."""
-    html = _get(hostname, "/login.htm", {"Cookie": "hp-iLO-Login="})
+    """GET login.htm and extract sessionkey + sessionindex.
 
-    session_key = _extract(html, 'var sessionkey="', '";')
-    session_index = _extract(html, 'var sessionindex="', '";')
-    return session_key, session_index
+    iLO2 throttles repeat logins with a "Login Delay" page that omits the
+    JS session vars. Detect that and wait it out instead of bubbling up
+    a confusing "substring not found" ValueError.
+    """
+    last_html = ""
+    for attempt in range(_LOGIN_DELAY_MAX_RETRIES):
+        html = _get(hostname, "/login.htm", {"Cookie": "hp-iLO-Login="})
+        last_html = html
+
+        delay = _login_delay_seconds(html)
+        if delay is not None:
+            wait = min(delay + 1, 60)
+            print(f"iLO2 login throttled, waiting {wait}s (attempt {attempt + 1}/{_LOGIN_DELAY_MAX_RETRIES})")
+            time.sleep(wait)
+            continue
+
+        try:
+            session_key = _extract(html, 'var sessionkey="', '";')
+            session_index = _extract(html, 'var sessionindex="', '";')
+        except ValueError:
+            # Not a delay page but still missing the vars — short retry then fail loudly.
+            time.sleep(2)
+            continue
+        return session_key, session_index
+
+    snippet = last_html[:200].replace("\n", " ")
+    raise RuntimeError(
+        f"iLO2 login.htm did not return session vars after {_LOGIN_DELAY_MAX_RETRIES} attempts. "
+        f"Response began with: {snippet!r}"
+    )
 
 
 def stage2(
@@ -106,16 +151,23 @@ def authenticate(hostname: str, username: str, password: str, **kwargs) -> dict[
     """Full authentication flow, returns DVC params dict."""
     supercookie = ""
 
-    # Try loading saved cookie
     if COOKIE_FILE.exists():
         saved = COOKIE_FILE.read_text().strip()
-        if saved and is_valid(hostname, saved):
+        try:
+            reusable = bool(saved) and is_valid(hostname, saved)
+        except Exception:
+            reusable = False
+        if reusable:
             supercookie = saved
-        else:
-            session_key, session_index = stage1(hostname)
-            supercookie = stage2(hostname, username, password, session_key, session_index)
-    else:
+
+    if not supercookie:
         session_key, session_index = stage1(hostname)
         supercookie = stage2(hostname, username, password, session_key, session_index)
+
+    if not supercookie:
+        raise RuntimeError(
+            "iLO2 did not issue a session cookie — check username/password "
+            "(case-sensitive) and that the account is not locked."
+        )
 
     return stage3(hostname, supercookie)
